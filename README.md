@@ -1,64 +1,64 @@
 # CPU Throttle Benchmark
 
-Benchmark pentru compararea **thermal throttling** între CPU-uri, folosind build-ul unui proiect .NET real ca workload.
+Benchmark for comparing **thermal throttling** between CPUs, using the build of a real .NET project as the workload.
 
 ## Setup
 
-Testat pe:
+Tested on:
 - **AMD Ryzen AI 9 HX PRO 370** (12c/24t, TJmax 95°C, TDP 28–54W)
 - **Intel** (TBD)
 
-Workload: `dotnet build Studio.sln -m` × 10 iterații cu `git clean -xdf` între ele.
+Workload: `dotnet build Studio.sln -m` × 10 iterations with `git clean -xdf` between each.
 
-## Utilizare
+## Usage
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File run-benchmark.ps1
 ```
 
-Scriptul face automat:
-1. **Preflight** — verifică că dotnet, git, VSCodium și soluția există
-2. **dotnet restore** — o singură dată la început
-3. **Monitor CPU** — deschide o fereastră separată care scrie frecvența + % performanță la fiecare 5s
-4. **Build loop** — 10 iterații cu 30s cooldown între ele
-5. **Raport** — generează `benchmark-results/report-amd-ryzen-hx370.md` și îl deschide în VSCodium
+The script automatically:
+1. **Preflight** — checks that dotnet, git, VSCodium, and the solution exist
+2. **dotnet restore** — once at the start
+3. **CPU monitor** — opens a separate window that logs frequency + performance % every 5s
+4. **Build loop** — 10 iterations with 30s cooldown between each
+5. **Report** — generates `benchmark-results/report-amd-ryzen-hx370.md` and opens it in VSCodium
 
-## Configurare
+## Configuration
 
-Editează variabilele din `run-benchmark.ps1`:
+Edit the variables in `run-benchmark.ps1`:
 
 ```powershell
-$sln     = "C:/dev/studio/Studio/Studio.sln"   # calea spre soluția ta
-$repoDir = "C:/dev/studio/Studio"               # repo-ul de curățat
-$outDir  = "C:/dev/benchmark-results"           # unde se salvează rezultatele
+$sln     = "C:/dev/studio/Studio/Studio.sln"   # path to your solution
+$repoDir = "C:/dev/studio/Studio"               # repo to clean
+$outDir  = "C:/dev/benchmark-results"           # where results are saved
 ```
 
 ## Output
 
 ```
 benchmark-results/
-├── cpu-metrics.csv          # frecvență CPU la fiecare 5s (din monitor)
-├── build-results.csv        # durată per iterație
-├── report-amd-ryzen-hx370.md  # raport final cu tabel + grafic ASCII
-└── iter-N.log               # build log per iterație
+├── cpu-metrics.csv          # CPU frequency every 5s (from monitor)
+├── build-results.csv        # duration per iteration
+├── report-amd-ryzen-hx370.md  # final report with table + ASCII chart
+└── iter-N.log               # build log per iteration
 ```
 
-## Metrici colectate
+## Collected Metrics
 
-| Metrică | Sursă |
-|---------|-------|
-| Frecvență curentă (MHz) | `Win32_Processor.CurrentClockSpeed` |
+| Metric | Source |
+|--------|--------|
+| Current frequency (MHz) | `Win32_Processor.CurrentClockSpeed` |
 | % Processor Performance | Windows Perf Counter |
 | % CPU Usage | Windows Perf Counter |
-| Build duration per iterație | `Measure-Command` |
+| Build duration per iteration | `Measure-Command` |
 
-> Fără drepturi de admin necesare.
+> No admin rights required.
 
-## Scripturi
+## Scripts
 
-| Fișier | Rol |
-|--------|-----|
-| `run-benchmark.ps1` | **Launcher** — pornește totul cu o singură comandă |
-| `benchmark-build.ps1` | Build loop cu git clean + raport final |
-| `monitor-cpu.ps1` | Monitor CPU în fereastră separată |
-| `cpu-throttle-benchmark-prompt.md` | Prompt AI pentru a rula benchmark-ul via Claude |
+| File | Role |
+|------|------|
+| `run-benchmark.ps1` | **Launcher** — starts everything with a single command |
+| `benchmark-build.ps1` | Build loop with git clean + final report |
+| `monitor-cpu.ps1` | CPU monitor in a separate window |
+| `cpu-throttle-benchmark-prompt.md` | AI prompt for running the benchmark via Claude |
