@@ -1,80 +1,181 @@
 # Running on the Intel Machine
 
-This guide covers running the same benchmark on a second machine (Intel) so you can compare results.
+This guide covers running the same benchmark on an Intel machine so you can compare against the AMD Ryzen AI HX PRO 370 results.
+
+**AMD baseline results are in `amd-results/` for comparison.**
+
+---
 
 ## Prerequisites
 
-Same as AMD — see [how-to-run.md](how-to-run.md). Additionally:
+### Software (install via winget in PowerShell as admin)
 
-- The Studio repo must be cloned on the Intel machine
-- .NET SDK 8.0 must be installed (`winget install Microsoft.DotNet.SDK.8`)
-- NuGet auth / VPN same as AMD machine
+```powershell
+winget install Microsoft.DotNet.SDK.8
+winget install Git.Git
+winget install Microsoft.DotNet.Framework.DeveloperPack_4   # .NET 4.8.1 for net472 projects
+```
+
+### .NET Framework 4.7.2 targeting pack (required)
+
+The build targets net472. The winget pack above installs 4.8.1 but NOT 4.7.2.
+Download and install 4.7.2 manually:
+
+```powershell
+$url = "https://go.microsoft.com/fwlink/?linkid=874338"
+$tmp = "$env:TEMP\ndp472-devpack.exe"
+(New-Object System.Net.WebClient).DownloadFile($url, $tmp)
+Start-Process -FilePath $tmp -ArgumentList '/q /norestart' -Wait
+```
+
+> After install, a **machine restart may be needed** before MSBuild finds the assemblies.
+> If you see `MSB3644: reference assemblies for .NETFramework,Version=v4.7.2 were not found`,
+> the scripts already pass `/p:TargetFrameworkRootPath=...` to work around this without restart.
+
+### NuGet authentication (UiPath internal feed)
+
+```powershell
+# 1. Install the Azure Artifacts Credential Provider
+iex ((New-Object System.Net.WebClient).DownloadString('https://aka.ms/install-artifacts-credprovider.ps1'))
+
+# 2. Login to Azure
+az login   # or use: az login --use-device-code
+
+# 3. Cache credentials interactively (one-time only)
+dotnet restore C:/dev/studio/Studio/Studio.sln --interactive
+# -> opens browser, sign in with your @uipath.com account
+# -> subsequent restores work non-interactively from cache
+```
+
+### Studio repo
+
+```powershell
+git clone <studio-repo-url> C:/dev/studio/Studio
+```
 
 ---
 
-## Step 1 — Copy the scripts
-
-Either clone the repo or copy the 3 scripts manually:
+## Step 1 — Get the benchmark scripts
 
 ```powershell
-# Option A: clone
+# Clone this repo
 git clone https://github.com/ibabencu/cpu-throttle-benchmark C:/dev/cpu-throttle-benchmark
-
-# Option B: copy from a USB / network share
-# run-benchmark.ps1
-# benchmark-build.ps1
-# monitor-cpu.ps1
 ```
+
+Or copy these 3 files manually:
+- `benchmark-build.ps1`
+- `run-benchmark.ps1`
+- `monitor-cpu.ps1`
 
 ---
 
-## Step 2 — Update paths in run-benchmark.ps1
+## Step 2 — Configure paths for Intel
 
-Same variables as AMD, adjust to match the Intel machine's paths:
+Edit `run-benchmark.ps1` — update these variables at the top:
 
 ```powershell
-$sln     = "C:/dev/studio/Studio/Studio.sln"
-$repoDir = "C:/dev/studio/Studio"
-$outDir  = "C:/dev/benchmark-results-intel"     # use a different outDir!
-$codium  = "C:/Users/<intel-username>/AppData/Local/Programs/VSCodium/bin/codium.cmd"
+$SolutionPath = "C:/dev/studio/Studio/Studio.sln"     # adjust if cloned elsewhere
+$RepoPath     = "C:/dev/studio/Studio"
+$OutputDir    = "C:/dev/benchmark-results-intel"       # keep different from AMD!
+$CodiumPath   = "C:/Users/<username>/AppData/Local/Programs/VSCodium/bin/codium.cmd"
 ```
 
-> Use a different `$outDir` (e.g. `benchmark-results-intel`) so results don't overwrite AMD data if you're sharing a drive.
+> **Important:** Use a different `$OutputDir` than the AMD run so you don't overwrite the AMD data.
 
 ---
 
-## Step 3 — Update report filename in benchmark-build.ps1
+## Step 3 — Update the report name in benchmark-build.ps1
 
-The report is currently hardcoded to `report-amd-ryzen-hx370.md`. On Intel, change line 78:
+Find line ~83 (the `$reportFile` variable) and change it to auto-detect the CPU name:
 
 ```powershell
-# Old (AMD):
+# Old (hardcoded AMD name):
 $reportFile = "$OutputDir/report-amd-ryzen-hx370.md"
 
-# New (Intel) — the script auto-detects CPU name:
-$cpuName = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
-$safeName = $cpuName -replace '[^a-zA-Z0-9]', '-' -replace '-+', '-'
-$reportFile = "$OutputDir/report-intel-$safeName.md"
+# New (auto-detect, works on any CPU):
+$cpuName    = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+$safeName   = ($cpuName -replace '[^a-zA-Z0-9]', '-').Trim('-') -replace '-+', '-'
+$reportFile = "$OutputDir/report-$safeName.md"
 ```
 
 ---
 
-## Step 4 — Run
+## Step 4 — Run the benchmark
+
+Open PowerShell (does NOT need to be admin) and run:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File run-benchmark.ps1
+Set-ExecutionPolicy -Scope Process Bypass
+& C:/dev/benchmark-build.ps1 -Iterations 10 -CooldownSec 30
 ```
 
-Same flow as AMD. Estimated time: 60–90 minutes.
+Or use the full launcher (opens monitor in a separate window):
+
+```powershell
+& C:/dev/run-benchmark.ps1
+```
+
+**Estimated time:** 30-120 minutes depending on Intel CPU throttling behavior.
 
 ---
 
-## Step 5 — Compare results
+## Step 5 — What to watch for during the run
 
-After both benchmarks are done, copy both `benchmark-results*/` folders to the same machine and compare:
+Check `benchmark-results-intel/build-results.csv` while it runs:
 
-- `report-amd-ryzen-hx370.md` vs `report-intel-*.md`
-- Open both side by side in VSCodium: `codium report-amd.md report-intel.md`
-- Key metrics: **drift**, **freq range**, **avg build time**
+```powershell
+# Live tail (run in a second PowerShell window)
+while ($true) { Get-Content C:/dev/benchmark-results-intel/build-results.csv; Start-Sleep 30 }
+```
 
-See [interpreting-results.md](interpreting-results.md) for what to look for.
+**AMD reference:**
+- Iters 1-3: ~215-228s (baseline)
+- Iter 4: **965s** (throttle kicks in)
+- Iter 8: **2056s** (extreme throttle)
+- Throttle ratio: **13.5x**
+
+If Intel stays under 300s for all 10 iterations, that's a huge win.
+
+---
+
+## Step 6 — Compare results
+
+Place both result folders side by side:
+
+```
+C:/dev/
+  benchmark-results/          <- AMD results (already done)
+  benchmark-results-intel/    <- Intel results (just ran)
+```
+
+Key comparison metrics:
+
+| Metric                      | AMD Ryzen HX PRO 370 | Intel (your run) |
+|-----------------------------|---------------------|------------------|
+| Baseline build time (iter1) | 228s                | ?                |
+| First throttle at iter #    | 4                   | ?                |
+| Max build time              | 2056s               | ?                |
+| Throttle ratio (max/min)    | **13.5x**           | ?                |
+| Avg build time              | 601s                | ?                |
+| Fastest build               | 152s                | ?                |
+
+Open both reports in VSCodium:
+
+```powershell
+codium C:/dev/benchmark-results/report-amd-ryzen-hx370.md `
+       C:/dev/benchmark-results-intel/report-*.md
+```
+
+See [interpreting-results.md](interpreting-results.md) for detailed analysis guidance.
+
+---
+
+## Troubleshooting
+
+| Error | Fix |
+|-------|-----|
+| `NU1301: Unable to load service index` | Run `dotnet restore --interactive` first |
+| `MSB3644: .NETFramework v4.7.2 not found` | Scripts pass `/p:TargetFrameworkRootPath=...` automatically — if still failing, restart machine |
+| `NETSDK1004: project.assets.json not found` | Run `dotnet restore Studio.sln` manually once, then retry |
+| `git clean` takes very long | Normal — it removes all build artifacts before each iteration |
+| Build times wildly inconsistent on iter 1 | Machine was already warm — add 5min cooldown before starting |
