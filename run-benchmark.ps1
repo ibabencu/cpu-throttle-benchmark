@@ -24,10 +24,16 @@ Write-Host "=== CPU Benchmark Launcher ===" -ForegroundColor Cyan
 $preflightPaths = @{
     "dotnet"   = $dotnet
     "git"      = $git
-    "codium"   = $codium
     "solution" = $sln
     "monitor"  = $monitor
     "builder"  = $builder
+}
+
+# codium is optional — only check if it exists
+if (Test-Path $codium) {
+    $preflightPaths["codium"] = $codium
+} else {
+    Write-Host "INFO: VSCodium not found at $codium - report will not auto-open." -ForegroundColor DarkGray
 }
 
 $preflightOK = $true
@@ -120,14 +126,22 @@ Write-Host "#                                                      #" -Foregroun
 Write-Host "########################################################" -ForegroundColor Magenta
 Write-Host ""
 
-# Open the report in Codium
-$reportFile = "$outDir/report-amd-ryzen-hx370.md"
-if (Test-Path $reportFile) {
-    Write-Host "Opening report in Codium: $reportFile" -ForegroundColor Cyan
-    & $codium $reportFile
+# Find the report — auto-detect filename (works on any CPU, not just AMD)
+$reportFile = Get-ChildItem -Path $outDir -Filter "report-*.md" |
+              Sort-Object LastWriteTime -Descending |
+              Select-Object -First 1 -ExpandProperty FullName
+
+if ($reportFile) {
+    Write-Host "Report generated: $reportFile" -ForegroundColor Cyan
+    if (Test-Path $codium) {
+        Write-Host "Opening in VSCodium..." -ForegroundColor Cyan
+        & $codium $reportFile
+    } else {
+        Write-Host "Open the report manually: $reportFile" -ForegroundColor Yellow
+    }
 } else {
-    Write-Host "ERROR: Report file not found: $reportFile" -ForegroundColor Red
-    Write-Host "The benchmark may not have generated the report yet. Check $outDir manually." -ForegroundColor Yellow
+    Write-Host "ERROR: No report-*.md found in $outDir" -ForegroundColor Red
+    Write-Host "Check $outDir manually for build errors." -ForegroundColor Yellow
 }
 
 # Summary of output files

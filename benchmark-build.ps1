@@ -8,11 +8,11 @@ param(
 
 $dotnet = "C:/Program Files/dotnet/dotnet.exe"
 $git    = "C:/Program Files/Git/bin/git.exe"
+$refRoot = "C:\dev\ref-assemblies\"
 
 if (-not (Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir | Out-Null }
 
 $csvFile = "$OutputDir/build-results.csv"
-$logFile = "$OutputDir/build-log.txt"
 
 "iteration,start_time,end_time,duration_sec,freq_mhz_start,freq_mhz_end,exit_code" | Out-File $csvFile -Encoding utf8
 
@@ -20,12 +20,54 @@ function Get-CpuFreq {
     (Get-CimInstance Win32_Processor | Select-Object -First 1).CurrentClockSpeed
 }
 
+# ---------------------------------------------------------------------------
+# CPU name — auto-detect for portable report filename
+# ---------------------------------------------------------------------------
+$cpuName  = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
+$safeName = ($cpuName -replace '[^a-zA-Z0-9]', '-').Trim('-') -replace '-+', '-'
+$reportFile = "$OutputDir/report-$safeName.md"
+
 Write-Host "=== CPU Throttling Benchmark ===" -ForegroundColor Cyan
+Write-Host "CPU      : $cpuName"
 Write-Host "Solution : $SolutionPath"
 Write-Host "Iterations: $Iterations  |  Cooldown: ${CooldownSec}s"
 Write-Host "Results  : $OutputDir"
+Write-Host "Report   : $reportFile"
 Write-Host ""
 
+# ---------------------------------------------------------------------------
+# DocGen pre-build — prevents 9009 / "is not recognized" errors
+# Finds UiPath.Api.Package.DocGen.csproj anywhere in RepoPath and builds it
+# once, then adds all its bin output dirs to PATH.
+# ---------------------------------------------------------------------------
+Write-Host "Looking for UiPath.Api.Package.DocGen..." -ForegroundColor DarkGray
+$docGenProj = Get-ChildItem $RepoPath -Recurse -Filter "UiPath.Api.Package.DocGen.csproj" `
+              -ErrorAction SilentlyContinue | Select-Object -First 1
+
+if ($docGenProj) {
+    Write-Host "Pre-building DocGen: $($docGenProj.FullName)" -ForegroundColor Cyan
+    & $dotnet build $docGenProj.FullName --no-restore `
+        /p:TargetFrameworkRootPath="$refRoot" 2>&1 |
+        Out-File "$OutputDir/docgen-prebuild.log" -Encoding utf8
+
+    $docGenDir = Split-Path $docGenProj.FullName
+    $binDirs = Get-ChildItem $docGenDir -Recurse -Directory |
+               Where-Object { $_.FullName -match '\\bin\\' }
+    foreach ($d in $binDirs) {
+        if ($env:PATH -notlike "*$($d.FullName)*") {
+            $env:PATH = "$($d.FullName);$env:PATH"
+        }
+    }
+    Write-Host "DocGen pre-build done. Added $($binDirs.Count) bin dirs to PATH." -ForegroundColor Green
+} else {
+    Write-Host "DocGen project not found - skipping pre-build." -ForegroundColor DarkGray
+}
+
+Write-Host ""
+
+# ---------------------------------------------------------------------------
+# Main build loop
+# ---------------------------------------------------------------------------
 for ($i = 1; $i -le $Iterations; $i++) {
     Write-Host "--- Iteration $i / $Iterations ---" -ForegroundColor Yellow
 
@@ -34,12 +76,19 @@ for ($i = 1; $i -le $Iterations; $i++) {
     & $git -C $RepoPath clean -xdf -q 2>&1 | Out-Null
     Write-Host " done"
 
+    # restore after clean (fast - packages already in NuGet cache, just rebuilds obj/project.assets.json)
+    Write-Host "  dotnet restore..." -NoNewline
+    & $dotnet restore $SolutionPath /p:TargetFrameworkRootPath="$refRoot" -q 2>&1 | Out-Null
+    Write-Host " done"
+
     $freqStart = Get-CpuFreq
     $startTime = Get-Date
     Write-Host "  Build start: $($startTime.ToString('HH:mm:ss'))  CPU: ${freqStart} MHz"
 
-    # dotnet build
-    & $dotnet build $SolutionPath --no-restore -m 2>&1 | Tee-Object -FilePath "$OutputDir/iter-$i.log"
+    # dotnet build - pass TargetFrameworkRootPath so net461/net472/net481 assemblies resolve
+    & $dotnet build $SolutionPath --no-restore -m `
+        /p:TargetFrameworkRootPath="$refRoot" `
+        2>&1 | Tee-Object -FilePath "$OutputDir/iter-$i.log"
     $exitCode = $LASTEXITCODE
 
     $endTime  = Get-Date
@@ -47,7 +96,8 @@ for ($i = 1; $i -le $Iterations; $i++) {
     $duration = [math]::Round(($endTime - $startTime).TotalSeconds, 1)
 
     $status = if ($exitCode -eq 0) { "OK" } else { "FAIL($exitCode)" }
-    Write-Host "  Build end  : $($endTime.ToString('HH:mm:ss'))  CPU: ${freqEnd} MHz  Duration: ${duration}s  [$status]" -ForegroundColor $(if ($exitCode -eq 0) { "Green" } else { "Red" })
+    $color  = if ($exitCode -eq 0) { "Green" } else { "Red" }
+    Write-Host "  Build end  : $($endTime.ToString('HH:mm:ss'))  CPU: ${freqEnd} MHz  Duration: ${duration}s  [$status]" -ForegroundColor $color
 
     # append CSV
     "$i,$($startTime.ToString('yyyy-MM-dd HH:mm:ss')),$($endTime.ToString('yyyy-MM-dd HH:mm:ss')),$duration,$freqStart,$freqEnd,$exitCode" | Add-Content $csvFile
@@ -60,10 +110,12 @@ for ($i = 1; $i -le $Iterations; $i++) {
     Write-Host ""
 }
 
-# --- Report ---
+# ---------------------------------------------------------------------------
+# Report generation
+# ---------------------------------------------------------------------------
 Write-Host "=== Generating report ===" -ForegroundColor Cyan
 
-$rows = Import-Csv $csvFile
+$rows      = Import-Csv $csvFile
 $durations = $rows | ForEach-Object { [double]$_.duration_sec }
 $freqsStart = $rows | ForEach-Object { [int]$_.freq_mhz_start }
 
@@ -73,12 +125,10 @@ $avgDur  = [math]::Round(($durations | Measure-Object -Average).Average, 1)
 $drift   = [math]::Round($durations[-1] - $durations[0], 1)
 $minFreq = ($freqsStart | Measure-Object -Minimum).Minimum
 $maxFreq = ($freqsStart | Measure-Object -Maximum).Maximum
-
-$cpuName = (Get-CimInstance Win32_Processor | Select-Object -First 1).Name
-$reportFile = "$OutputDir/report-amd-ryzen-hx370.md"
+$throttleRatio = if ($durations[0] -gt 0) { [math]::Round($maxDur / $durations[0], 2) } else { "N/A" }
 
 $report = @"
-# CPU Throttling Benchmark Report — AMD
+# CPU Throttling Benchmark Report
 
 **CPU:** $cpuName
 **Date:** $(Get-Date -Format 'yyyy-MM-dd HH:mm')
@@ -98,6 +148,7 @@ foreach ($row in $rows) {
 
 $report += @"
 
+
 ## Summary
 
 | Metric | Value |
@@ -106,6 +157,7 @@ $report += @"
 | Max build time | ${maxDur}s |
 | Avg build time | ${avgDur}s |
 | **Drift (iter 1 vs 10)** | **${drift}s** |
+| **Throttle ratio (max/min)** | **${throttleRatio}x** |
 | Min CPU freq seen | ${minFreq} MHz |
 | Max CPU freq seen | ${maxFreq} MHz |
 
@@ -116,9 +168,9 @@ $report += @"
 
 $maxF = ($freqsStart | Measure-Object -Maximum).Maximum
 foreach ($row in $rows) {
-    $f = [int]$row.freq_mhz_start
+    $f    = [int]$row.freq_mhz_start
     $bars = [math]::Round($f / $maxF * 40)
-    $bar = "#" * $bars
+    $bar  = "#" * $bars
     $report += "`nIter $($row.iteration.PadLeft(2)): $($f.ToString().PadLeft(5)) MHz |$bar"
 }
 
@@ -129,19 +181,19 @@ $report += @"
 ## Conclusion
 
 $(if ([math]::Abs($drift) -lt 5) {
-    "Throttling minimal: build time drift de doar ${drift}s intre iteratia 1 si 10."
+    "Throttling minimal: drift de doar ${drift}s intre iteratia 1 si 10."
 } elseif ($drift -gt 0) {
-    "Throttling detectat: build time a crescut cu ${drift}s ($(([math]::Round($drift / $durations[0] * 100, 1)))%) de la iteratia 1 la 10."
+    "Throttling detectat: build time a crescut cu ${drift}s ($(([math]::Round($drift / $durations[0] * 100, 1)))%) de la iteratia 1 la 10. Throttle ratio: ${throttleRatio}x."
 } else {
-    "CPU s-a incalzit si s-a stabilizat — build time stabil."
+    "CPU s-a incalzit si s-a stabilizat - build time stabil sau mai rapid dupa warm-up."
 })
 
 Frecventa CPU: min ${minFreq} MHz / max ${maxFreq} MHz (delta $($maxFreq - $minFreq) MHz).
 
-> **Pentru comparatie:** ruleaza acelasi script pe laptopul Intel si compara `drift` si `freq delta`.
+> **Pentru comparatie AMD vs Intel:** ruleaza `compare-results.ps1` dupa ce ai rezultate de pe ambele masini.
 "@
 
 $report | Out-File $reportFile -Encoding utf8
 Write-Host "Report saved: $reportFile" -ForegroundColor Green
 Write-Host ""
-Write-Host "Summary: min=${minDur}s  max=${maxDur}s  avg=${avgDur}s  drift=${drift}s  freqRange=${minFreq}-${maxFreq}MHz"
+Write-Host "Summary: min=${minDur}s  max=${maxDur}s  avg=${avgDur}s  drift=${drift}s  throttleRatio=${throttleRatio}x  freqRange=${minFreq}-${maxFreq}MHz"
