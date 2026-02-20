@@ -78,8 +78,13 @@ for ($i = 1; $i -le $Iterations; $i++) {
 
     # restore after clean (fast - packages already in NuGet cache, just rebuilds obj/project.assets.json)
     Write-Host "  dotnet restore..." -NoNewline
-    & $dotnet restore $SolutionPath /p:TargetFrameworkRootPath="$refRoot" -q 2>&1 | Out-Null
-    Write-Host " done"
+    $restoreOut = & $dotnet restore $SolutionPath /p:TargetFrameworkRootPath="$refRoot" --verbosity quiet 2>&1
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host " FAILED (exit $LASTEXITCODE)" -ForegroundColor Red
+        $restoreOut | Select-Object -Last 5 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
+    } else {
+        Write-Host " done"
+    }
 
     $freqStart = Get-CpuFreq
     $startTime = Get-Date
