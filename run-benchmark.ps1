@@ -53,18 +53,33 @@ if (-not $preflightOK) {
 Write-Host "Preflight OK" -ForegroundColor Green
 
 # ---------------------------------------------------------------------------
-# STEP 1/4  -  DOTNET RESTORE
+# STEP 1/4  -  DOTNET RESTORE + INITIAL BUILD (creates bin/obj directory structure)
 # ---------------------------------------------------------------------------
 Write-Host ""
-Write-Host "Step 1/4: dotnet restore..." -ForegroundColor Cyan
+Write-Host "Step 1/4: dotnet restore + initial build (one-time setup)..." -ForegroundColor Cyan
+Write-Host "  This may take a few minutes on first run." -ForegroundColor DarkGray
 
+Set-Location (Split-Path $sln)  # run from repo dir so global.json is picked up (SDK 8)
 & $dotnet restore $sln
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: dotnet restore failed (exit code $LASTEXITCODE)." -ForegroundColor Red
     exit 1
 }
-
 Write-Host "dotnet restore completed successfully." -ForegroundColor Green
+
+# Initial build: populates bin/obj dirs and all output files (runtimeconfig.json, deps.json, etc.)
+# Without this, --no-incremental iterations fail because copy targets reference files that
+# only exist after a successful initial build (UseAppHost=false for net8.0 skips app host generation,
+# but these files are produced by the first full build and reused in subsequent --no-incremental runs).
+$refRoot = "C:\dev\ref-assemblies\"
+$nodeDir = "C:/Users/ionut.babencu/bin/node-v22.14.0-win-x64"
+if ($env:PATH -notlike "*$nodeDir*") { $env:PATH = "$nodeDir;$env:PATH" }
+
+Write-Host "  Running initial build (populates output dirs for first-time setup)..." -ForegroundColor DarkGray
+& $dotnet build $sln --no-restore /p:TargetFrameworkRootPath="$refRoot" /p:RunAnalyzers=false `
+    2>&1 | Where-Object { $_ -match "Error\(s\)|succeeded|FAILED|Build succeeded|Build FAILED" } |
+    Select-Object -Last 3
+Write-Host "  Initial build done (exit $LASTEXITCODE)." -ForegroundColor DarkGray
 
 # ---------------------------------------------------------------------------
 # STEP 2/4  -  START CPU MONITOR IN A NEW VISIBLE WINDOW

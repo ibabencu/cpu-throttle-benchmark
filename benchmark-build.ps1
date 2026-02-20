@@ -9,6 +9,15 @@ param(
 $dotnet = "C:/Program Files/dotnet/dotnet.exe"
 $git    = "C:/Program Files/Git/bin/git.exe"
 $refRoot = "C:\dev\ref-assemblies\"
+$nodeDir = "C:/Users/ionut.babencu/bin/node-v22.14.0-win-x64"
+
+# Add Node.js to PATH so npm ci works in UiPath.Studio.Shell build
+if ($env:PATH -notlike "*$nodeDir*") {
+    $env:PATH = "$nodeDir;$env:PATH"
+}
+
+# Run from repo dir so global.json is picked up (pins SDK to 8.x)
+Set-Location $RepoPath
 
 if (-not (Test-Path $OutputDir)) { New-Item -ItemType Directory -Path $OutputDir | Out-Null }
 
@@ -47,18 +56,23 @@ $docGenProj = Get-ChildItem $RepoPath -Recurse -Filter "UiPath.Api.Package.DocGe
 if ($docGenProj) {
     Write-Host "Pre-building DocGen: $($docGenProj.FullName)" -ForegroundColor Cyan
     & $dotnet build $docGenProj.FullName --no-restore `
-        /p:TargetFrameworkRootPath="$refRoot" 2>&1 |
+        /p:TargetFrameworkRootPath="$refRoot" /p:RunAnalyzers=false 2>&1 |
         Out-File "$OutputDir/docgen-prebuild.log" -Encoding utf8
 
-    $docGenDir = Split-Path $docGenProj.FullName
-    $binDirs = Get-ChildItem $docGenDir -Recurse -Directory |
-               Where-Object { $_.FullName -match '\\bin\\' }
-    foreach ($d in $binDirs) {
-        if ($env:PATH -notlike "*$($d.FullName)*") {
-            $env:PATH = "$($d.FullName);$env:PATH"
+    # DocGen outputs to Output\Api\Tools\DocGen\Debug\ (not bin\)
+    # Add all subdirs of that output location to PATH so DocGen.exe is found
+    $docGenOutDir = "$RepoPath\Output\Api\Tools\DocGen\Debug"
+    $pathDirs = @()
+    if (Test-Path $docGenOutDir) {
+        $pathDirs += $docGenOutDir
+        $pathDirs += Get-ChildItem $docGenOutDir -Directory | Select-Object -ExpandProperty FullName
+    }
+    foreach ($d in $pathDirs) {
+        if ($env:PATH -notlike "*$d*") {
+            $env:PATH = "$d;$env:PATH"
         }
     }
-    Write-Host "DocGen pre-build done. Added $($binDirs.Count) bin dirs to PATH." -ForegroundColor Green
+    Write-Host "DocGen pre-build done. Added $($pathDirs.Count) output dirs to PATH." -ForegroundColor Green
 } else {
     Write-Host "DocGen project not found - skipping pre-build." -ForegroundColor DarkGray
 }
@@ -71,28 +85,22 @@ Write-Host ""
 for ($i = 1; $i -le $Iterations; $i++) {
     Write-Host "--- Iteration $i / $Iterations ---" -ForegroundColor Yellow
 
-    # git clean
-    Write-Host "  git clean -xdf..." -NoNewline
-    & $git -C $RepoPath clean -xdf -q 2>&1 | Out-Null
+    # Touch all .cs files to mark them as modified → forces full recompile on incremental build
+    # This avoids the --no-incremental MSB3030 copy failures caused by UseAppHost=false
+    Write-Host "  Touching .cs files..." -NoNewline
+    $now = Get-Date
+    Get-ChildItem $RepoPath -Recurse -Include "*.cs" -ErrorAction SilentlyContinue |
+        Where-Object { $_.FullName -notmatch '\\(obj|bin|Legacy)\\' } |
+        ForEach-Object { $_.LastWriteTime = $now }
     Write-Host " done"
-
-    # restore after clean (fast - packages already in NuGet cache, just rebuilds obj/project.assets.json)
-    Write-Host "  dotnet restore..." -NoNewline
-    $restoreOut = & $dotnet restore $SolutionPath /p:TargetFrameworkRootPath="$refRoot" --verbosity quiet 2>&1
-    if ($LASTEXITCODE -ne 0) {
-        Write-Host " FAILED (exit $LASTEXITCODE)" -ForegroundColor Red
-        $restoreOut | Select-Object -Last 5 | ForEach-Object { Write-Host "    $_" -ForegroundColor Red }
-    } else {
-        Write-Host " done"
-    }
 
     $freqStart = Get-CpuFreq
     $startTime = Get-Date
     Write-Host "  Build start: $($startTime.ToString('HH:mm:ss'))  CPU: ${freqStart} MHz"
 
-    # dotnet build - pass TargetFrameworkRootPath so net461/net472/net481 assemblies resolve
+    # Incremental build (all .cs are newer than outputs → full recompile, no copy-related failures)
     & $dotnet build $SolutionPath --no-restore -m `
-        /p:TargetFrameworkRootPath="$refRoot" `
+        /p:TargetFrameworkRootPath="$refRoot" /p:RunAnalyzers=false `
         2>&1 | Tee-Object -FilePath "$OutputDir/iter-$i.log"
     $exitCode = $LASTEXITCODE
 
