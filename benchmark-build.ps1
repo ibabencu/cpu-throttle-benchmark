@@ -140,6 +140,17 @@ $minFreq = ($freqsStart | Measure-Object -Minimum).Minimum
 $maxFreq = ($freqsStart | Measure-Object -Maximum).Maximum
 $throttleRatio = if ($durations[0] -gt 0) { [math]::Round($maxDur / $durations[0], 2) } else { "N/A" }
 
+$maxTempC = "N/A"
+$metricsCsv = "$OutputDir/cpu-metrics.csv"
+if (Test-Path $metricsCsv) {
+    $temps = Import-Csv $metricsCsv |
+             Where-Object { $_.temp_c -and [double]$_.temp_c -gt 0 } |
+             ForEach-Object { [double]$_.temp_c }
+    if ($temps) {
+        $maxTempC = "$([math]::Round(($temps | Measure-Object -Maximum).Maximum, 1)) C"
+    }
+}
+
 $report = @"
 # CPU Throttling Benchmark Report
 
@@ -173,6 +184,7 @@ $report += @"
 | **Throttle ratio (max/min)** | **${throttleRatio}x** |
 | Min CPU freq seen | ${minFreq} MHz |
 | Max CPU freq seen | ${maxFreq} MHz |
+| **Max temp observed** | **${maxTempC}** |
 
 ## ASCII Frequency Chart (start of each build)
 
@@ -194,16 +206,16 @@ $report += @"
 ## Conclusion
 
 $(if ([math]::Abs($drift) -lt 5) {
-    "Throttling minimal: drift de doar ${drift}s intre iteratia 1 si 10."
+    "Minimal throttling: drift of only ${drift}s between iteration 1 and 10."
 } elseif ($drift -gt 0) {
-    "Throttling detectat: build time a crescut cu ${drift}s ($(([math]::Round($drift / $durations[0] * 100, 1)))%) de la iteratia 1 la 10. Throttle ratio: ${throttleRatio}x."
+    "Throttling detected: build time increased by ${drift}s ($(([math]::Round($drift / $durations[0] * 100, 1)))%) from iteration 1 to 10. Throttle ratio: ${throttleRatio}x."
 } else {
-    "CPU s-a incalzit si s-a stabilizat - build time stabil sau mai rapid dupa warm-up."
+    "CPU warmed up and stabilized - build time stable or faster after warm-up."
 })
 
-Frecventa CPU: min ${minFreq} MHz / max ${maxFreq} MHz (delta $($maxFreq - $minFreq) MHz).
+CPU frequency: min ${minFreq} MHz / max ${maxFreq} MHz (delta $($maxFreq - $minFreq) MHz).
 
-> **Pentru comparatie AMD vs Intel:** ruleaza `compare-results.ps1` dupa ce ai rezultate de pe ambele masini.
+> **To compare AMD vs Intel:** run `compare-results.ps1` after collecting results from both machines.
 "@
 
 $report | Out-File $reportFile -Encoding utf8

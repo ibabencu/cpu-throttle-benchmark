@@ -1,5 +1,5 @@
 $refRoot  = "C:\dev\ref-assemblies\.NETFramework"
-$nuget461 = "C:\Users\ionut.babencu\.nuget\packages\microsoft.netframework.referenceassemblies.net461\1.0.3\build\.NETFramework\v4.6.1"
+$nuget461 = "C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.6.1"
 $sys472   = "C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.7.2"
 $sys481   = "C:\Program Files (x86)\Reference Assemblies\Microsoft\Framework\.NETFramework\v4.8.1"
 
