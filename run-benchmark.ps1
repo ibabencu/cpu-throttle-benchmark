@@ -9,12 +9,12 @@
 # ---------------------------------------------------------------------------
 $dotnet  = "C:/Program Files/dotnet/dotnet.exe"
 $git     = "C:/Program Files/Git/bin/git.exe"
-$codium  = "C:/Users/ionut.babencu/AppData/Local/Programs/VSCodium/bin/codium.cmd"
-$sln     = "C:/dev/studio/Studio/Studio.sln"
-$monitor = "C:/dev/monitor-cpu.ps1"
-$builder = "C:/dev/benchmark-build.ps1"
-$repoDir = "C:/dev/studio/Studio"
-$outDir  = "C:/dev/benchmark-results"
+$codium  = "C:/Users/ionut.babencu/AppData/Local/Programs/Microsoft VS Code/bin/code.cmd"
+$sln     = "C:/workstuff/github_repos/Studio/Studio.sln"
+$monitor = "C:/workstuff/github_repos/cpu-throttle-benchmark/monitor-cpu.ps1"
+$builder = "C:/workstuff/github_repos/cpu-throttle-benchmark/benchmark-build.ps1"
+$repoDir = "C:/workstuff/github_repos/Studio"
+$outDir  = "C:/workstuff/github_repos/benchmark-results"
 
 # ---------------------------------------------------------------------------
 # STEP 0  -  PREFLIGHT
@@ -87,7 +87,7 @@ Write-Host "  Initial build done (exit $LASTEXITCODE)." -ForegroundColor DarkGra
 Write-Host ""
 Write-Host "Step 2/4: Starting CPU monitor (new window)..." -ForegroundColor Cyan
 
-$monitorArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`""
+$monitorArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$monitor`" -OutputFile `"$outDir/cpu-metrics.csv`""
 $monitorProc = Start-Process "$PSHOME\powershell.exe" `
     -ArgumentList $monitorArgs `
     -PassThru
